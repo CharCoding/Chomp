@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Chomp</title>
+  <style>
+  body {
+    background-color: #000;
+    color: #ddd;
+    margin: 0;
+  }
+  #board {
+    position: absolute;
+    left: 50vw;
+    top: 25vh;
+    width: 75vh;
+    margin-left: -37.5vh;
+    cursor: pointer;
+    color: transparent;
+  }
+  #ui {
+    position: absolute;
+    left: 50vw;
+    bottom: 80vh;
+    width: 80vh;
+    margin-left: -40vh;
+    text-align: center;
+  }
+  #info {
+    position: absolute;
+    left: 0;
+    top: 25vh;
+    margin-left: 0;
+    width: auto;
+  }
+  #p00 {
+    background-color: #f99;
+  }
+  #p00.taken {
+    background-color: #733;
+  }
+  .piece {
+    position: relative;
+    display: inline-block;
+    width: 5vh;
+    height: 5vh;
+    background-color: #ccc;
+    border: 1px solid #777;
+    box-sizing: border-box;
+    vertical-align: top;
+    transition: background-color 250ms, border-color 50ms;
+  }
+  .piece:hover {
+    border-color: #000;
+  }
+  .piece:focus {
+    border-color: #07f !important;
+  }
+  .taken {
+    background-color: #333;
+  }
+  .taken:hover {
+    border-color: #777;
+  }
+  input[type="number"] {
+    width: 80px;
+  }
+  </style>
+  <!--script src="chomp.js"></script-->
+</head>
+<body>
+  <div id="board">
+  </div>
+  <div id="ui">
+    <input type="number" min="3" max="15" value="15" step="1" id="bx" placeholder="width"> &times;
+    <input type="number" min="3" max="13" value="13" step="1" id="by" placeholder="height">
+    <button id="newGame"><u>N</u>ew Game</button><br>
+    Use AI: <input type="checkbox" id="p1ai" /><label for="p1ai">Player 1</label> &nbsp; <input type="checkbox" id="p2ai" /><label for="p2ai">Player 2</label> &nbsp; <button id="once"><u>O</u>nce</button><br>
+    AI level: Weak <input type="range" id="lvl" min="0" max="2" step="1" value="1" /> Strong<br>
+    <input type="checkbox" id="analyze" checked="true" /><label for="analyze">Show analysis</label> &nbsp; <input type="checkbox" id="auto" /><label for="auto">Auto move</label><br>
+    <input type="checkbox" id="learning" /><label for="learning">Enable learning (experimental)</label><br>
+    <input type="button" id="undoBtn" value="Undo (Z)" /> <input type="button" id="redoBtn" value="Redo (Y)" />
+    <button id="stopBtn"><u>S</u>top</button>
+  </div>
+  <div id="info">Player 1<br>
+    Move 1<br>
+    (x, y)<br>
+    Pos: fffffffffffff<br>
+    Height: 13<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15<br>
+    15
+  </div>
+  <script>
+  var maxX = 15, maxY = 13;
+  const coord = id => [parseInt(id[1], 16), parseInt(id[2], 16)];
+  const multipliers = Float64Array.of(0x1, 0x11, 0x111, 0x1111, 0x11111, 0x111111, 0x1111111, 0x11111111, 0x111111111, 0x1111111111, 0x11111111111, 0x111111111111, 0x1111111111111);
+  const divisors = Float64Array.of(0x1, 0x10, 0x100, 0x1000, 0x10000, 0x100000, 0x1000000, 0x10000000, 0x100000000, 0x1000000000, 0x10000000000, 0x100000000000, 0x1000000000000);
+  const ppos = [];
+  let currPos = multipliers[maxY - 1] * maxX;
+  let move = 1, timer;
+  for(let j = 0; j < maxY; ++j)
+    for(let i = 0; i < maxX; ++i) {
+      const div = document.createElement('div');
+      div.className = 'piece';
+      div.id = 'p' + i.toString(16) + j.toString(16);
+      div.textContent = i + ', ' + j;
+      div.tabIndex = -1;
+      board.appendChild(div);
+    }
+  const b = (x, y) => document.getElementById('p' + x.toString(16) + y.toString(16));
+  function loadPos(pos) {
+    debugger;
+    currPos = pos;
+    for(let j = 13; j--;)
+      for(let i = 15; i--;)
+        b(i, j).className = ((pos / divisors[j] & 15) > i) ? 'piece' : 'piece taken';
+  }
+  function binSearch(x, min = 0){
+    let max = ppos.length - 1, index, current;
+    while(min <= max) {
+      index = min + max >> 1;
+      current = ppos[index];
+      if(current < x)
+        min = index + 1;
+      else if(current > x)
+        max = index - 1;
+      else
+        return index;
+    }
+    return ~min; // returns -insertion point - 1 if not found
+  }
+  function cascadeDown(x, y) {
+    b(x, y).className += ' taken';
+    if((++y < maxY) && b(x, y).className == 'piece')
+      setTimeout(cascadeDown, 15, x, y);
+  }
+  function cascadeRight(x, y) {
+    b(x, y).className += ' taken';
+    if((x + 1 < maxX) && b(x + 1, y).className == 'piece')
+      setTimeout(cascadeRight, 15, x + 1, y);
+    if((++y < maxY) && b(x, y).className == 'piece')
+      setTimeout(cascadeDown, 15, x, y);
+  }
+  board.onclick = e => {
+    if(e.target.className == 'piece') {
+      e.target.focus();
+      ++move;
+      if(e.target.id == 'p00') {
+        clearTimeout(timer);
+        currPos = 0;
+        info.textContent = 'Game over!';
+        if(confirm(`Player ${2 - (move & 1)} won in ${move >> 1} moves! Play again?`)) {
+          newGame.click();
+        }
+      } else {
+        const [x, y] = coord(e.target.id);
+        cascadeRight(x, y);
+        for(let i = y, h = height(currPos); i < h; ++i) {
+          let row = currPos / divisors[i] & 15;
+          if(row > x)
+            currPos -= (row - x) * divisors[i];
+          else
+            break;
+        }
+        info.innerText = `Player ${2 - (move & 1)}\nMove ${move >> 1}\n(${x}, ${y})\nPos: ${currPos.toString(16)}\nHeight: ${height(currPos)}\n${decode(currPos).join('\n')}`;
+        if(move & p1ai.checked || ~move & p2ai.checked) {
+          let [x, y] = fastMove(currPos);
+          timer = setTimeout(() => {
+            try {
+              b(x, y).click();
+            } catch(e) {
+              console.warn(x, y, e);
+            }
+          }, 500);
+          [x, y] = findMove(currPos);
+        }
+      }
+    }
+  }
+  newGame.onclick = e => {
+    if(currPos && confirm('Reset current game?'))
+      for(let j = maxY; j--;)
+        for(let i = maxX; i--;)
+          b(i, j).className = 'piece taken';
+    if(+bx.value > 15 || +bx.value < 3)
+      bx.value = 15;
+    if(+by.value > 13 || +by.value < 3)
+      by.value = 13;
+    maxX = +bx.value | 0;
+    maxY = +by.value | 0;
+    move = 1;
+    currPos = multipliers[maxY - 1] * maxX;
+    for(let j = maxY; j--;)
+      for(let i = maxX; i--;)
+        b(i, j).className = 'piece';
+    info.innerText = currPos.toString(16) + '\n' + decode(currPos).join('\n');
+    clearTimeout(timer);
+    if(p1ai.checked) {
+      let x = maxX - 1, y = maxY - 1;
+      timer = setTimeout(() => {
+        try {
+          b(x, y).click();
+        } catch(e) {
+          console.warn(x, y, e);
+        }
+      }, 500);
+      [x, y] = findMove(currPos);
+    }
+  }
+  /*
+  p00.addEventListener('click', e => {
+    e.preventDefault();
+
+    return false;
+  }, false);
+  */
+  function decode(pos) {
+    const lengths = new Uint8Array(maxY);
+    for(let i = maxY; i--;)
+      lengths[i] = pos / divisors[i] & 15;
+    return lengths;
+  }
+  function encode(arr) {
+    let pos = 0;
+    for(let i = arr.length; i--;)
+      pos += divisors[i] * arr[i];
+    return pos;
+  }
+  function load(pos) {
+    currPos = pos;
+    for(let j = 13; j--;)
+      for(let i = 15; i--;)
+        b(i, j).className = ((pos / divisors[j] & 15) > i) ? 'piece' : 'piece taken';
+  }
+  function height(pos) {
+    return Math.ceil(Math.log2(pos) / 4); // accurate until pos == 1
+  }
+  const height2 = pos => Math.ceil(Math.log2(pos + 1) / 4);
+  function reflect(pos) {
+    if((pos & 15) > 13)
+      return -1;
+    let newPos = 0, h = height(pos), i = 0;
+    while(pos) {
+      newPos += h * divisors[i];
+      pos -= multipliers[h - 1];
+      h = height(pos) || 1;
+      ++i;
+    }
+    return newPos;
+  }
+  const srand = () => Math.sqrt(Math.random());
+  function randMove(pos) {
+    const y = srand() * height(pos) | 0;
+    return [(pos / divisors[y] & 15) - 1, y];
+  }
+  function fastMove(pos) {
+    const w = pos & 15;
+    let y = height(pos), max = (pos / divisors[y] & 15) + y;
+    for(let i = y; i--;) {
+      const row = pos / divisors[i] & 15,
+        dist = row + i;
+      if(max < dist) {
+        max = dist;
+        y = i;
+      }
+      if(row == w)
+        break;
+    }
+    return [max - y - 1, y];
+  }
+  /*
+  function allMoves(pos) {
+    const m = [];
+    let h = height2(pos), w = pos & 15, aux = 0;
+    for(let x = 0; x < w; ++x) {
+      for(let y = Math.max(2 - x, 0); y < h; ++y) {
+        m.push(pos % divisors[y] + aux);
+      }
+      aux += multipliers[h - 1];
+      pos -= multipliers[h - 1];
+      h = height2(pos);
+    }
+    return m;
+  }
+  function alphabeta(pos) { // returns true if losing, false if winning
+    if(binSearch(pos) >= 0) // position is losing
+      return true; // returns true if losing
+    if(pos % multipliers[height(pos) - 1] == 0)
+      return false;
+    // dont know if is losing
+    // check if it is a move away from losing
+    // for all moves, if any of the new positions is losing, return false (winning)
+    const bool = allMoves(pos).every(npos => !alphabeta(npos));
+    if(bool) {
+      ppos.splice(~binSearch(pos), 0, pos);
+      const ref = reflect(pos), index = binSearch(ref);
+      if(index < 0) {
+        ppos.splice(~index, 0, ref);
+      }
+    }
+    return bool;
+  }
+  */
+  function losing(pos) {
+    /*
+    if(pos < 1) {
+      console.warn('losing() called with nonpositive number');
+      return false;
+    }
+    */
+    const H = height(pos) - 1;
+    let test = pos % multipliers[H];
+    if(test == 0) // any rectangle except 1x1 is a winnable position
+      return false;
+    const w = pos & 15;
+    test = pos - multipliers[H];
+    if(H == height(test) && w > 2)
+      return false;
+    /*
+    if((pos / divisors[H - 1] | 0) == 0x12)
+      return false;
+    */
+    let index = binSearch(pos);
+    if(index >= 0)
+      return true;
+    let aux = 0;
+    for(let x = 0; x < w; ++x) {
+      let h = height2(pos);
+      for(let y = Math.max(2 - x, 0); y < h; ++y) {
+        if(losing(pos % divisors[y] + aux)) {
+          return false;
+        }
+      }
+      aux += multipliers[h - 1];
+      pos -= multipliers[h - 1];
+    }
+    /*
+    index = binSearch(aux, ~index);
+    if(index < 0) {
+      ppos.splice(~index, 0, aux);
+    } else {
+      alert(aux);
+    }
+    aux = reflect(aux);
+    index = binSearch(aux);
+    if(index < 0) {
+      ppos.splice(~index, 0, aux);
+    } else {
+      alert(aux);
+    }
+    /*/
+    ppos.splice(~binSearch(aux), 0, aux);
+    pos = reflect(aux);
+    if(pos > 0 && pos != aux)
+      ppos.splice(~binSearch(pos), 0, pos);
+    //*/
+    return true;
+  }
+  function squares(pos) {
+    let sum = pos & 15;
+    for(let i = height(pos); --i;) {
+      sum += pos / divisors[i] & 15;
+    }
+    return sum;
+  }
+  function findMove(pos) {
+    let w = pos & 15, h = height(pos);
+    if(h < 1) { // lost
+      return [0, 0];
+    }
+    if(w == 1) {
+      return [0, 1];
+    }
+    if(h == 1) {
+      return [1, 0];
+    }
+    if(w == h) {
+      if(pos & 0xe0)
+      // if((pos >> 4 & 15) > 1) // winning
+        return [1, 1];
+      return randMove(pos); // losing, return rand move
+    }
+    if(h == 2) {
+      const row2 = pos >> 4 & 15;
+      switch(w - row2) {
+        case 0:
+          return [row2 - 1, 1];
+        case 1:
+          const y = Math.round(Math.random());
+          return [row2 - y, y];
+        default:
+          return [row2 + 1, 0];
+      }
+    }
+    if(w == 2) {
+      const col2 = height2(pos - multipliers[h - 1]);
+      switch(h - col2) {
+        case 0:
+          return [1, col2 - 1];
+        case 1:
+          const x = Math.round(Math.random());
+          return [x, col2 - x];
+        default:
+          return [0, col2 + 1];
+      }
+    }
+    if(binSearch(pos) >= 0) {
+      return fastMove(pos);
+    }
+    let aux = w, calc = losing;
+    for(let i = h; --i;) {
+      aux += pos / divisors[i] & 15;
+    }
+    if(aux > 32) {
+      //return fastMove(pos);
+      calc = pos => binSearch(pos) >= 0;
+    }
+    aux = 0;
+    const moves = [];
+    for(let x = 0; x < w; ++x) {
+      let h = height2(pos);
+      for(let y = Math.max(2 - x, 0); y < h; ++y) {
+        if(calc(pos % divisors[y] + aux)) {
+          return [x, y];
+        }
+      }
+      aux += multipliers[h - 1];
+      pos -= multipliers[h - 1];
+    }
+    return fastMove(pos);
+  }
+  const dict = Uint16Array.of(
+    0x336, 0x347, 0x355, 0x448, 0x477, 0x1125, 0x2226, 0x2237, 0x2248, 0x2255,
+    0x2335, 0x2357, 0x2368, 0x2447, 0x2458, 0x2588, 0x3338, 0x3377, 0x3457, 0x4557
+  );
+  function populate() {
+    ppos.length = 0;
+    for(let i = Math.min(maxX, maxY); i--;) { // 0x1, 0x12, 0x113, 0x1114, ...
+      ppos.push(multipliers[i] + i); // these are the only symmetric ppos
+    }
+    for(let i = maxX - 1; --i;) { // 0x23, 0x34, 0x45, 0x56, ...
+      ppos.push(i * 0x11 + 0x12);
+    }
+    for(let i = maxY - 1; i > 1;) { // 0x122, 0x1222, 0x12222, 0x122222, ...
+      ppos.push(multipliers[i] + multipliers[--i]);
+    }
+    for(let i = maxX - 2; --i;) { // 0x224, 0x235, 0x246, 0x257, ...
+      ppos.push(i * 0x11 + 0x213);
+    }
+    for(let i = maxY - 2; --i;) { // 0x1133, 0x11233, 0x112233, 0x1122233, ...
+      ppos.push(0x11 + multipliers[i] + multipliers[i + 2]);
+    }
+    for(let i = 0; i < dict.length; ++i) {
+      const pos = dict[i], h = height(pos), w = pos & 15;
+      if(h <= maxY && w <= maxX) {
+        ppos.push(pos);
+      }
+      if(h <= maxX && w <= maxY) {
+        ppos.push(reflect(pos));
+      }
+    }
+    ppos.sort((a, b) => a > b);
+  }
+  populate();
+  /*
+  function takePos(pos, x, y) {
+    for(let i = y, h = height(pos); i < h; ++i) {
+      const row = pos / divisors[i] & 15;
+      if(row > x)
+        pos -= (row - x) * divisors[i];
+      else
+        break;
+    }
+    return pos;
+  }
+  */
+  function isStrictlyIncreasing(arr) {
+    for(let i = arr.length - 1; i;) {
+      if(arr[i] <= arr[--i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+  </script>
+</body>
+</html>
