@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Chomp</title>
+  <style>
+  body {
+    background-color: #000;
+    color: #ddd;
+    margin: 0;
+  }
+  h1 {
+    text-align: center;
+  }
+  #board {
+    position: absolute;
+    left: 50vw;
+    top: 25vh;
+    width: 64vh;
+    margin-left: -32vh;
+    cursor: pointer;
+    color: #ccc;
+  }
+  #haxis {
+    position: absolute;
+    left: 0;
+    top: -20px;
+    width: 64vh;
+    height: 20px;
+  }
+  .hlabel {
+    width: 4vh;
+    text-align: center;
+    display: inline-block;
+  }
+  #vaxis {
+    position: absolute;
+    left: -20px;
+    top: 0;
+    width: 18px;
+    height: 64vh;
+  }
+  .vlabel {
+    margin-top: 1vh;
+    margin-bottom: 1vh;
+    margin-right: 1px;
+    height: 3vh;
+    vertical-align: bottom;
+    text-align: right;
+  }
+  #ui {
+    position: absolute;
+    left: 50vw;
+    bottom: 80vh;
+    width: 80vh;
+    margin-left: -40vh;
+    text-align: center;
+  }
+  #info {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    margin-left: 0;
+    width: auto;
+  }
+  #p00 {
+    background-color: #f99;
+  }
+  #p00.taken {
+    background-color: #733;
+  }
+  .piece {
+    position: relative;
+    display: inline-block;
+    width: 4vh;
+    height: 4vh;
+    background-color: #ccc;
+    border: 1px solid #777;
+    box-sizing: border-box;
+    vertical-align: top;
+    transition: background-color 250ms, border-color 50ms;
+  }
+  .piece:hover {
+    border-color: #000;
+  }
+  .piece:focus {
+    border-color: #07f !important;
+  }
+  .taken {
+    background-color: #333;
+  }
+  .taken:hover {
+    border-color: #777;
+  }
+  input[type="number"] {
+    width: 80px;
+  }
+  </style>
+</head>
+<body>
+  <h1>Chomp</h1>
+  <div id="board">
+    <div id="haxis"></div>
+    <div id="vaxis"></div>
+  </div>
+  <div id="ui">
+    <input type="number" min="3" max="16" value="16" step="1" id="bx" placeholder="width"> &times;
+    <input type="number" min="3" max="16" value="14" step="1" id="by" placeholder="height">
+    <button id="newGame"><u>N</u>ew Game</button><br>
+    Use AI: <input type="checkbox" id="p1ai" /><label for="p1ai">Player 1</label> &nbsp; <input type="checkbox" id="p2ai" /><label for="p2ai">Player 2</label> &nbsp; <button id="once"><u>O</u>nce</button> &nbsp; <button id="haltBtn"><u>H</u>alt</button><br>
+    AI level: Weak <input type="range" id="lvl" min="0" max="2" step="1" value="1" /> Strong<br>
+    <!--input type="button" id="undoBtn" value="Undo (Z)" /> <input type="button" id="redoBtn" value="Redo (Y)" /-->
+  </div>
+  <div id="info"></div>
+  <script>
+  const coord = id => [parseInt(id[1], 16), parseInt(id[2], 16)],
+    p = (x, y) => document.getElementById('p' + x.toString(16) + y.toString(16)),
+    initPos = (x, y) => (65536 - (65536 >> x)) << y | (65535 >> x),
+    pos2str = pos => (pos >>> 0).toString(2).padStart(32, '0'),
+    popcount = word => {
+      word = word - ((word >> 1) & 1431655765);
+      word = (word & 858993459) + ((word >> 2) & 858993459);
+      return ((word + (word >> 4) & 252645135) * 16843009) >>> 24;
+    },
+    take = (x, y) => {
+      let rpos = -1 << (16 - x + y);
+      let lpos = currPos & rpos;
+      rpos ^= currPos;
+      let ones = popcount(lpos) - x;
+      if(ones <= 0) {
+        return false;
+      }
+      do {
+        lpos &= lpos - 1;
+      } while(--ones);
+      while(y--) {
+        rpos |= rpos + 1;
+      }
+      currPos ^= ~(lpos | rpos);
+      return true;
+    },
+    bestMove = () => {
+      if(binSearch(currPos) >= 0) {
+        return randMove();
+      }
+      let mask = -1 << (31 ^ Math.clz32(currPos));
+      const end = currPos + 1 & ~currPos;
+      do {
+        let lpos = currPos & mask;
+        let rpos = ~(currPos | mask);
+        do {
+          lpos &= lpos - 1;
+          rpos ^= 1 << (31 ^ Math.clz32(rpos));
+          if(binSearch(lpos | ~(rpos | mask)) >= 0) {
+            return [popcount(lpos), popcount(rpos)];
+          }
+        } while(lpos && rpos);
+        mask >>= 1;
+      } while(mask + end)
+    },
+    randMove = () => {
+      const elm = document.querySelectorAll('.piece:not(.taken,#p00)'); // kind of cheating
+      if(elm.length == 0) {
+        return [0, 0];
+      }
+      const filtered = [].filter.call(elm, e => parseInt(e.id[1], 16) > 2 && parseInt(e.id[2], 16) > 2);
+      if(filtered.length == 0) {
+        return coord(elm[Math.random() * elm.length | 0].id);
+        //return farthestMove(); // guaranteed to be bad?
+      }
+      return coord(filtered[Math.random() * filtered.length | 0].id);
+    },
+    farthestMove = () => {
+      let pos = currPos;
+      let x = 15;
+      while(pos & 1) {
+        pos >>>= 1;
+        --x;
+      }
+      pos >>>= 1;
+      let y = 0;
+      let maxDist = x;
+      let moves = [[x, y]];
+      while(pos) {
+        if(pos & 1) {
+          --x;
+        } else {
+          ++y;
+        }
+        if(x + y > maxDist) {
+          moves = [[x, y]];
+          maxDist = x + y;
+        } else if(x + y == maxDist) {
+          moves.push([x, y]);
+        }
+        pos >>= 1;
+      }
+      return moves[Math.random() * moves.length | 0];
+    },
+    AI = diffy => { // balancing the AI is difficult because moves are either good or bad, no inbetweens (unlike chess)
+      const [x, y] = bestMove(); // find it anyway because it's cheap
+      const squares = document.querySelectorAll('.piece:not(.taken').length;
+      if(diffy == 0) { // weak AI will always make a random move
+        if(squares < 9) { // unless fewer than 9 pieces left
+          return [x, y];
+        }
+        return randMove();
+      }
+      if(x < 2 || y < 2) { // make best move if "could be obvious"
+        return [x, y];
+      }
+      if(diffy == 1) { // normal AI has 1/2 chance to fail every other move
+        if(squares < 13) { // unless fewer than 13 squares left
+          return [x, y];
+        }
+        aiMistake = !aiMistake;
+        if(aiMistake && Math.random() < .5) {
+          return randMove();
+        }
+        return [x, y];
+      }
+      if(aiMistake) { // strong AI will fail the first move
+        aiMistake = false;
+        return randMove();
+      }
+      return [x, y]; // but will always make best moves afterwards
+    };
+  let maxX = +bx.value, maxY = +by.value;
+  let move = 2, timer, currPos = initPos(maxX, maxY), aiMistake = true;
+  for(let j = 0; j < 16; ++j) {
+    const hlabel = document.createElement('div');
+    hlabel.className = 'hlabel';
+    hlabel.textContent = j;
+    haxis.appendChild(hlabel);
+    const vlabel = document.createElement('div');
+    vlabel.className = 'vlabel';
+    vlabel.textContent = j;
+    vaxis.appendChild(vlabel);
+    for(let i = 0; i < 16; ++i) {
+      const div = document.createElement('div');
+      div.className = 'piece';
+      if(i >= maxX || j >= maxY) {
+        div.className += ' taken';
+      }
+      div.id = 'p' + i.toString(16) + j.toString(16);
+      div.tabIndex = -1;
+      board.appendChild(div);
+    }
+  }
+  let ppos;
+  function binSearch(x, min = 0){
+    x >>>= 0;
+    let max = ppos.length - 1, index, current;
+    while(min <= max) {
+      index = min + max >> 1;
+      current = ppos[index];
+      if(current < x)
+        min = index + 1;
+      else if(current > x)
+        max = index - 1;
+      else
+        return index;
+    }
+    return ~min; // returns -insertion point - 1 if not found
+  }
+  function cascadeDown(x, y) {
+    p(x, y).className += ' taken';
+    if((++y < maxY) && p(x, y).className == 'piece')
+      setTimeout(cascadeDown, 15, x, y);
+  }
+  function cascadeRight(x, y) {
+    p(x, y).className += ' taken';
+    if((x + 1 < maxX) && p(x + 1, y).className == 'piece')
+      setTimeout(cascadeRight, 15, x + 1, y);
+    if((++y < maxY) && p(x, y).className == 'piece')
+      setTimeout(cascadeDown, 15, x, y);
+  }
+  board.onclick = e => {
+    if(e.target.className == 'piece') {
+      e.target.focus();
+      ++move;
+      if(e.target.id == 'p00') {
+        currPos = 65535;
+        clearTimeout(timer);
+        info.textContent = 'Game over!';
+        if(confirm(`Player ${1 + (move & 1)} won in ${move >> 1} moves! Play again?`)) {
+          newGame.click();
+        }
+      } else {
+        let [x, y] = coord(e.target.id);
+        take(x, y);
+        cascadeRight(x, y);
+        info.innerText = `Player ${1 + (move & 1)}\nMove ${move >> 1}\n(${x}, ${y})\nPos: ${pos2str(currPos)}`;
+        if(~move & p1ai.checked || move & p2ai.checked) {
+          timer = setTimeout(() => p(...AI(+lvl.value)).click(), 400);
+        }
+      }
+    }
+  }
+  newGame.onclick = e => {
+    if(currPos > ppos[0] && confirm('Reset current game?'))
+      for(let j = maxY; j--;)
+        for(let i = maxX; i--;)
+          p(i, j).className = 'piece taken';
+    if(+bx.value > 16 || +bx.value < 3)
+      bx.value = 16;
+    if(+by.value > 16 || +by.value < 3)
+      by.value = 16;
+    maxX = +bx.value | 0;
+    maxY = +by.value | 0;
+    aiMistake = true;
+    if(maxX == maxY) {
+      console.warn('Square boards are trivial.');
+    }
+    currPos = initPos(maxX, maxY);
+    move = 2;
+    info.innerText = `Player ${1 + (move & 1)}\nMove ${move >> 1}\nNew Game\nPos: ${pos2str(currPos)}`;
+    for(let j = maxY; j--;)
+      for(let i = maxX; i--;)
+        p(i, j).className = 'piece';
+    clearTimeout(timer);
+    if(p1ai.checked) {
+      p(...AI(+lvl.value)).click();
+    }
+  }
+  if(!ppos) {
+    // see solver.cpp for how 16x is generated
+    // also, you need to serve this file on a web server, not from your filesystem. Otherwise the browser
+    // reports a security error and won't load the dictionary. e.g., using node.js: $ http-server .
+    fetch('16x').then(res => res.arrayBuffer()).then(arr => ppos = new Uint32Array(arr)).then(() => {
+      console.log('Loaded 16x ppos');
+      if(p1ai.checked) {
+        p(...AI(+lvl.value)).click();
+      }
+    }, () => console.warn('Failed to load 16x ppos'));
+  }
+  info.innerText = `Player ${1 + (move & 1)}\nMove ${move >> 1}\nNew Game\nPos: ${pos2str(currPos)}`;
+  once.onclick = () => {
+    if(currPos > 65535)
+      p(...AI(+lvl.value)).click();
+  }
+  haltBtn.onclick = () => clearTimeout(timer);
+  /*
+  WebAssembly.instantiateStreaming(fetch('chomp.wasm'), { imports: {
+    contains: pos => {
+      let max = 3317971, min = 0;
+      while(min <= max) {
+        const index = min + max >>> 1,
+        current = ppos[index];
+        if(current < pos) {
+          min = index + 1;
+        } else if(current > pos) {
+          max = index - 1;
+        } else {
+          return true;
+        }
+      }
+      return false;
+    }
+  }})*/
+  </script>
+</body>
+</html>
