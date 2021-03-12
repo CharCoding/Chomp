@@ -39,9 +39,8 @@ Better square counting:
 pos = 01001100011100001111: 20 bit, maxX = maxY = 10
 naive algorithm: 1*2+3*3+6*4=35 squares, O(20)
 
-WA exp fit: 0.0451795e^(1.11088x)
-Rough upper bound: 0.045752e^(1.11088x)
-The estimates are really bad... exp model misses by like 4000
+WA exp fit: 0.0012656 e^(1.35537 x)
+The estimates are really bad... exp model misses by like 32k
 ppos size:
 3x3: 5
 4x4: 10
@@ -56,7 +55,7 @@ ppos size:
 13x13: 85555 (1.02s)
 14x14: 256366 (4.99s) (2 MiB)
 15x15: 829383 (25.81s) (6 MiB)
-16x16: est. 140s, 18 MiB
+16x16: 3317972 (4m20s using ./solver) (25.3 MiB)
 */
 
 int main(int argc, char const *argv[]) {
