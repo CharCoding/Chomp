@@ -1,78 +1,135 @@
-#include "chomp.h"
-#include <bitset>
-/*
-#include "gtest/gtest.h"
+#include <cstdio>
+#include <cstring>
+#include <algorithm>
+#include <parallel_hashmap/phmap.h>
 
-namespace {
-  Chomp game(33, 30);
-  TEST(Util, width) {
-    EXPECT_EQ(game.width(game.currPos), 33);
-  }
-  TEST(Util, height) {
-    EXPECT_EQ(game.height(game.currPos), 30);
-  }
-  TEST(Util, squares) {
-    EXPECT_EQ(game.squares(game.currPos), 30 * 33);
-    game.currPos = 0x10ffffffff;
-    EXPECT_EQ(game.squares(game.currPos), 4);
-    game.currPos = 0x2ffffffff;
-    EXPECT_EQ(game.squares(game.currPos), 1);
-  }
-}
-
-int main(int argc, char **argv) {
-  testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}
-*/
+#define LEN 3317972
 
 using namespace std;
 
-constexpr double ncr(double n, double r) {
-  double res = 1.0;
-  while(r) {
-    res *= n;
-    res /= r;
-    --n;
-    --r;
-  }
-  return res;
+__attribute__((const)) constexpr unsigned reflect(unsigned pos) {
+  pos = (pos & 0x55555555) << 1 | (pos & 0xaaaaaaaa) >> 1;
+  pos = (pos & 0x33333333) << 2 | (pos & 0xcccccccc) >> 2;
+  pos = (pos >> 4 | 0xf0f0f0f0) ^ (pos << 4 | 0x0f0f0f0f);
+  return __builtin_bswap32(pos);
 }
 
-#define gs 13
+void sort(unsigned* before) {
+  unsigned count[256];
+  unsigned* after = new unsigned[LEN];
+  for(unsigned i = 0; i < 32; i += 8) {
+    memset(count, 0, sizeof count);
+    unsigned* ptr = before;
+    unsigned* end = before + LEN;
+    do {
+      ++count[*ptr++ >> i & 255];
+    } while(ptr != end);
+    for(unsigned index = 1; index < 256; ++index) {
+      count[index] += count[index - 1];
+    }
+    do {
+      --ptr;
+      after[--count[*ptr >> i & 255]] = *ptr;
+    } while(ptr != before);
+    before = after;
+    after = ptr;
+  }
+  delete[] after;
+}
+
+phmap::flat_hash_set<unsigned> ppos(LEN - 2);
+unsigned h = 3;
+unsigned w = 4;
+
+inline constexpr unsigned inc(const unsigned pos) {
+  return pos + (pos & -pos);
+}
+
+__attribute__((pure)) bool isWinning(const unsigned pos) {
+  unsigned ipos = ~pos ^ 0xffff0000 << h;
+  do {
+    unsigned body = ipos & -ipos;
+    ipos ^= body;
+    unsigned tail = pos & body - 1;
+    unsigned head = pos ^ tail;
+    do {
+      head &= head - 1;
+      tail |= body;
+      if(ppos.contains(head | tail)) {
+        return true;
+      }
+      body += body;
+    } while(head);
+  } while(ipos);
+  return false;
+}
 
 int main() {
-  Chomp game(gs, gs - 1, 1);
-  cout << game.ppos.size() << endl;
-  game.draw();
-  game.currPos = game.solve(game.currPos);
-  game.draw();
-  /*
-  cout << game.ppos.size() << endl;
-  for(int i = gs; i; --i) {
-    for(int j = i; j; --j) {
-      //cout << i << ' ' << j << ": " << bitset<64>((1UL << (14 + j)) - 1UL - (1UL << (14 + j - i)) + (1UL << (14 - i))) << '\n';
-      cout << i << ' ' << j << ": ";
-      u64 tmp = (1UL << (gs + j)) - 1UL - (1UL << (gs + j - i)) + (1UL << (gs - i));
-      game.currPos = tmp;
-      game.draw();
-      cout << "=============\n";
-      game.currPos = game.solve(tmp);
-      game.draw();
-      cout << "=============\n";
-    }
+  unsigned hmin = 0x15fff;
+  unsigned pos = 0x2bfff;
+  for(unsigned window = 0xf << 13; window >= 0xf; window >>= 1) {
+    pos ^= window;
+    ppos.insert(pos);
+    ppos.insert(reflect(pos));
   }
-  cout << "done\n";
-  */
-  /*
-  for(int i = 3; i < 15; ++i) {
-    for(int j = i; j < 15; ++j) {
-      //Chomp game(i, j, 1);
-      //size_t s = game.ppos.size();
-      //cout << i << ", " << j << ": " << s << " ratio: " << (double)s / ncr(i + j, min(i, j)) << '\n';
-      cout << i << ", " << j << ": " << (i * j) * (i * j) << '\n';
+  ppos.insert(0x4dfff);
+  pos = 0x66fff;
+  while(true) {
+    if(w > h) {
+      if(isWinning(pos)) {
+        if((pos >> (15 - w) & 7) == 1) {
+          w = min(w + 2, 16U);
+          pos ^= 0x50000 >> w;
+          continue;
+        }
+        unsigned ripple = inc(pos);
+        if(!(ripple & pos)) {
+          w = h;
+          ++h;
+          if(h == 16) {
+            break;
+          }
+          ppos.insert(ripple | (0xffff & (0xfffeffff >> h)));
+          pos = ripple | hmin;
+          hmin ^= 0x18000 >> w;
+          continue;
+        }
+        pos = ripple;
+      } else {
+        ppos.insert(pos);
+        ppos.insert(reflect(pos));
+        pos &= pos + 1;
+        pos = inc(pos);
+      }
+    } else if(w != h && ppos.contains(pos)) {
+      pos &= pos + 1;
+      pos = inc(pos);
+    } else if(!(pos & 0x30000 >> w)) {
+      w = min(w + 2, 16U);
+      pos ^= 0x50000 >> w;
+      continue;
+    } else {
+      pos = inc(pos);
     }
-    cout << endl;
+    w = __builtin_popcount(pos);
+    pos |= 0xffff >> w;
   }
-  */
+  printf("%d\n", ppos.size());
+  unsigned* arr = new unsigned[LEN];
+  *arr = 0x17fff;
+  arr[1] = 0x2bfff;
+  arr[2] = 0x8000fffe;
+  arr += 3;
+  for(const unsigned p : ppos) {
+    *arr = p;
+    ++arr;
+  }
+  ppos.clear();
+  arr -= LEN;
+  sort(arr);
+  FILE* out = fopen("16x", "wb");
+  fwrite_unlocked(arr, 4, LEN, out);
+  delete[] arr;
+  fclose(out);
+  return 0;
 }
